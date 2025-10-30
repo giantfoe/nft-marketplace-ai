@@ -1,5 +1,5 @@
 # Use Rust official image as base
-FROM rust:1.75-slim as builder
+FROM rust:1.85-slim as builder
 
 # Install required dependencies
 RUN apt-get update && apt-get install -y \
@@ -10,26 +10,12 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy workspace files
-COPY Cargo.toml Cargo.lock ./
+# Copy backend files only
 COPY backend/Cargo.toml ./backend/
-COPY shared/Cargo.toml ./shared/
-
-# Create dummy main.rs for dependency caching
-RUN mkdir -p backend/src shared/src && \
-    echo "fn main() {}" > backend/src/main.rs && \
-    echo "fn main() {}" > shared/src/lib.rs
-
-# Build dependencies only
-RUN cargo build --release --workspace && \
-    rm -rf backend/src shared/src
-
-# Copy source code
 COPY backend/src ./backend/src
-COPY shared/src ./shared/src
 
-# Build the application
-RUN cargo build --release --workspace
+# Build the backend application
+RUN cd backend && cargo build --release
 
 # Production stage
 FROM debian:bookworm-slim
@@ -46,7 +32,7 @@ RUN useradd -r -s /bin/false appuser
 WORKDIR /app
 
 # Copy the binary
-COPY --from=builder /app/target/release/nft-marketplace-backend /app/backend
+COPY --from=builder /app/backend/target/release/nft-marketplace-backend /app/backend
 
 # Copy environment file template
 COPY backend/.env.example /app/.env
