@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NFT Marketplace - Test Frontend</title>
+    <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
+    <script src="https://unpkg.com/bs58@4.0.1/index.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 8px;
+            margin: 5px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .result {
+            background: #e9ecef;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            word-break: break-all;
+        }
+        .error {
+            color: red;
+        }
+        .success {
+            color: green;
+        }
+    </style>
+</head>
+<body>
+    <h1>NFT Marketplace - Test Interface</h1>
+
+    <div class="container">
+        <h2>Wallet Connection</h2>
+        <button id="connectWallet">Connect Wallet</button>
+        <button id="disconnectWallet">Disconnect Wallet</button>
+        <div id="walletStatus">Wallet: Not Connected</div>
+        <div id="walletAddress"></div>
+    </div>
+
+    <div class="container">
+        <h2>Generate Image & Mint NFT</h2>
+        <input type="text" id="nftName" placeholder="NFT Name" value="My NFT">
+        <input type="text" id="nftSymbol" placeholder="Symbol" value="MNFT">
+        <textarea id="prompt" placeholder="Enter image prompt..." rows="3">A beautiful digital art NFT of a futuristic city</textarea>
+        <select id="style">
+            <option value="">Default Style</option>
+            <option value="photorealistic">Photorealistic</option>
+            <option value="digital-art">Digital Art</option>
+            <option value="anime">Anime</option>
+            <option value="abstract">Abstract</option>
+        </select>
+        <button id="generateAndMintNft">Generate Image & Mint NFT</button>
+        <div id="generateAndMintResult"></div>
+    </div>
+
+    <div class="container">
+        <h2>Separate Operations (Legacy)</h2>
+        <details>
+            <summary>Click to expand separate image generation and minting</summary>
+            <div style="margin-top: 10px;">
+                <h3>Generate Image</h3>
+                <textarea id="promptLegacy" placeholder="Enter image prompt..." rows="3">A beautiful digital art NFT of a futuristic city</textarea>
+                <button id="generateImage">Generate Image</button>
+                <div id="imageResult"></div>
+                
+                <h3>Mint NFT</h3>
+                <input type="text" id="nftNameLegacy" placeholder="NFT Name" value="My NFT">
+                <input type="text" id="nftSymbolLegacy" placeholder="Symbol" value="MNFT">
+                <button id="mintNft">Mint NFT</button>
+                <div id="mintResult"></div>
+            </div>
+        </details>
+    </div>
+
+    <script>
+        let wallet = null;
+        let publicKey = null;
+        let generatedImageUrl = null;
+
+        // Initialize wallet
+        async function initWallet() {
+            if (window.solana) {
+                wallet = window.solana;
+                if (wallet.isPhantom) {
+                    document.getElementById('walletStatus').textContent = 'Wallet: Phantom detected';
+                } else if (wallet.isSolflare) {
+                    document.getElementById('walletStatus').textContent = 'Wallet: Solflare detected';
+                } else {
+                    document.getElementById('walletStatus').textContent = 'Wallet: Detected';
+                }
+                return true;
+            }
+            alert('Solana wallet not found. Please install Phantom or Solflare wallet.');
+            return false;
+        }
+
+        // Connect wallet
+        async function connectWallet() {
+            if (!wallet) {
+                if (!await initWallet()) return;
+            }
+
+            try {
+                const response = await wallet.connect();
+                publicKey = response.publicKey;
+                let walletName = 'Unknown';
+                if (wallet.isPhantom) walletName = 'Phantom';
+                else if (wallet.isSolflare) walletName = 'Solflare';
+                document.getElementById('walletStatus').textContent = `Wallet: ${walletName} Connected`;
+                document.getElementById('walletAddress').textContent = 'Address: ' + publicKey.toString();
+                document.getElementById('connectWallet').disabled = true;
+                document.getElementById('disconnectWallet').disabled = false;
+            } catch (err) {
+                console.error('Failed to connect wallet:', err);
+                alert('Failed to connect wallet');
+            }
+        }
+
+        // Disconnect wallet
+        async function disconnectWallet() {
+            if (wallet) {
+                await wallet.disconnect();
+                publicKey = null;
+                document.getElementById('walletStatus').textContent = 'Wallet: Not Connected';
+                document.getElementById('walletAddress').textContent = '';
+                document.getElementById('connectWallet').disabled = false;
+                document.getElementById('disconnectWallet').disabled = true;
+            }
+        }
+
+        // Generate image and mint NFT in one operation
+        async function generateAndMintNft() {
+            if (!publicKey) {
+                alert('Please connect your wallet first');
+                return;
+            }
+
+            const name = document.getElementById('nftName').value;
+            const symbol = document.getElementById('nftSymbol').value;
+            const prompt = document.getElementById('prompt').value;
+            const style = document.getElementById('style').value;
+
+            if (!name || !symbol || !prompt) {
+                alert('Please enter NFT name, symbol, and prompt');
+                return;
+            }
+
+            document.getElementById('generateAndMintNft').disabled = true;
+            document.getElementById('generateAndMintResult').innerHTML = 'Generating image and minting NFT...';
+
+            try {
+                // Sign a message to prove ownership
+                const message = `Generate and Mint NFT: ${name} for ${publicKey.toString()}`;
+                const encodedMessage = new TextEncoder().encode(message);
+                const signedMessage = await wallet.signMessage(encodedMessage);
+                const signature = bs58.encode(signedMessage.signature);
+
+                const response = await fetch('http://localhost:3001/generate-and-mint-nft', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        name,
+                        symbol,
+                        prompt,
+                        style: style || null,
+                        creator_pubkey: publicKey.toString(),
+                        signature,
+                        message,
+                    }),
+                });
+
+                const result = await response.json();
+                if (response.ok) {
+                    document.getElementById('generateAndMintResult').innerHTML = `
+                        <div class="success">NFT generated and minted successfully!</div>
+                        <div>NFT Address: ${result.nft_address}</div>
+                        <div>Transaction: ${result.transaction_signature}</div>
+                    `;
+                } else {
+                    document.getElementById('generateAndMintResult').innerHTML = `<div class="error">Error: ${result.error}</div>`;
+                }
+            } catch (err) {
+                console.error('Failed to generate and mint NFT:', err);
+                document.getElementById('generateAndMintResult').innerHTML = `<div class="error">Failed to generate and mint NFT</div>`;
+            } finally {
+                document.getElementById('generateAndMintNft').disabled = false;
+            }
+        }
+
+        // Generate image (legacy)
+        async function generateImage() {
+            const prompt = document.getElementById('promptLegacy').value;
+            if (!prompt) {
+                alert('Please enter a prompt');
+                return;
+            }
+
+            document.getElementById('generateImage').disabled = true;
+            document.getElementById('imageResult').innerHTML = 'Generating...';
+
+            try {
+                const response = await fetch('http://localhost:3001/generate-image', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ prompt }),
+                });
+
+                const result = await response.json();
+                if (response.ok) {
+                    generatedImageUrl = result.image_url;
+                    document.getElementById('imageResult').innerHTML = `
+                        <div class="success">Image generated successfully!</div>
+                        <img src="${result.image_url}" style="max-width: 300px; margin: 10px 0;">
+                        <div>URL: ${result.image_url}</div>
+                    `;
+                } else {
+                    document.getElementById('imageResult').innerHTML = `<div class="error">Error: ${result.error}</div>`;
+                }
+            } catch (err) {
+                console.error('Failed to generate image:', err);
+                document.getElementById('imageResult').innerHTML = `<div class="error">Failed to generate image</div>`;
+            } finally {
+                document.getElementById('generateImage').disabled = false;
+            }
+        }
+
+        // Mint NFT (legacy)
+        async function mintNft() {
+            if (!publicKey) {
+                alert('Please connect your wallet first');
+                return;
+            }
+
+            if (!generatedImageUrl) {
+                alert('Please generate an image first');
+                return;
+            }
+
+            const name = document.getElementById('nftNameLegacy').value;
+            const symbol = document.getElementById('nftSymbolLegacy').value;
+
+            if (!name || !symbol) {
+                alert('Please enter NFT name and symbol');
+                return;
+            }
+
+            document.getElementById('mintNft').disabled = true;
+            document.getElementById('mintResult').innerHTML = 'Minting NFT...';
+
+            try {
+                // Sign a message to prove ownership
+                const message = `Mint NFT: ${name} for ${publicKey.toString()}`;
+                const encodedMessage = new TextEncoder().encode(message);
+                const signedMessage = await wallet.signMessage(encodedMessage);
+                const signature = bs58.encode(signedMessage.signature);
+
+                const response = await fetch('http://localhost:3001/mint-nft', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        name,
+                        symbol,
+                        uri: generatedImageUrl,
+                        creator_pubkey: publicKey.toString(),
+                        signature,
+                        message,
+                    }),
+                });
+
+                const result = await response.json();
+                if (response.ok) {
+                    document.getElementById('mintResult').innerHTML = `
+                        <div class="success">NFT minted successfully!</div>
+                        <div>NFT Address: ${result.nft_address}</div>
+                        <div>Transaction: ${result.transaction_signature}</div>
+                    `;
+                } else {
+                    document.getElementById('mintResult').innerHTML = `<div class="error">Error: ${result.error}</div>`;
+                }
+            } catch (err) {
+                console.error('Failed to mint NFT:', err);
+                document.getElementById('mintResult').innerHTML = `<div class="error">Failed to mint NFT</div>`;
+            } finally {
+                document.getElementById('mintNft').disabled = false;
+            }
+        }
+
+        // Event listeners
+        document.getElementById('connectWallet').addEventListener('click', connectWallet);
+        document.getElementById('disconnectWallet').addEventListener('click', disconnectWallet);
+        document.getElementById('generateAndMintNft').addEventListener('click', generateAndMintNft);
+        document.getElementById('generateImage').addEventListener('click', generateImage);
+        document.getElementById('mintNft').addEventListener('click', mintNft);
+
+        // Initialize
+        initWallet();
+    </script>
+</body>
+</html>
