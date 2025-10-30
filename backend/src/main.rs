@@ -16,15 +16,18 @@ mod collection;
 mod wallet;
 mod freepik_api;
 mod marketplace;
+mod api;
 
 use freepik_api::{FreepikApiClient, GenerateImageRequest, GenerateImageResponse};
 
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        // Legacy endpoints
         health_check,
         mint_nft_handler,
         generate_and_mint_nft_handler,
+        get_fee_estimate_handler,
         create_collection_handler,
         list_nft_handler,
         buy_nft_handler,
@@ -37,12 +40,23 @@ use freepik_api::{FreepikApiClient, GenerateImageRequest, GenerateImageResponse}
         get_listed_nfts_handler,
         search_nfts_handler,
         get_nft_details_handler,
+        // New v1 API endpoints
+        api::generate_images,
+        api::mint_nft,
+        api::get_wallet_nfts,
+        api::list_nft,
+        api::get_listings,
+        api::get_fee_estimates,
+        api::health_check,
     ),
     components(
         schemas(
+            // Legacy schemas
             nft::MintNftRequest,
             nft::GenerateAndMintNftRequest,
             nft::MintNftResponse,
+            nft::FeeBreakdown,
+            nft::FeeEstimateResponse,
             nft::ListNftRequest,
             nft::BuyNftRequest,
             collection::CreateCollectionRequest,
@@ -57,6 +71,31 @@ use freepik_api::{FreepikApiClient, GenerateImageRequest, GenerateImageResponse}
             marketplace::SearchNftsRequest,
             marketplace::NftDetailsRequest,
             marketplace::NftDetailsResponse,
+            // New v1 API schemas
+            api::ApiResponse<api::GenerateImageResponse>,
+            api::ApiResponse<api::MintNftResponse>,
+            api::ApiResponse<api::GetWalletNftsResponse>,
+            api::ApiResponse<api::ListNftResponse>,
+            api::ApiResponse<api::GetListingsResponse>,
+            api::ApiResponse<api::FeeEstimateResponse>,
+            api::ApiResponse<api::HealthResponse>,
+            api::GenerateImageRequest,
+            api::GenerateImageResponse,
+            api::GeneratedImage,
+            api::MintNftRequest,
+            api::NftAttribute,
+            api::MintNftResponse,
+            api::GetWalletNftsRequest,
+            api::GetWalletNftsResponse,
+            api::NftInfo,
+            api::ListNftRequest,
+            api::ListNftResponse,
+            api::GetListingsRequest,
+            api::GetListingsResponse,
+            api::NftListing,
+            api::FeeEstimateResponse,
+            api::HealthResponse,
+            api::ApiError,
         )
     ),
     tags(
@@ -64,6 +103,8 @@ use freepik_api::{FreepikApiClient, GenerateImageRequest, GenerateImageResponse}
         (name = "wallet", description = "Wallet operations"),
         (name = "marketplace", description = "Marketplace operations"),
         (name = "image", description = "Image generation operations"),
+        (name = "images", description = "AI image generation operations"),
+        (name = "utilities", description = "Utility endpoints"),
     )
 )]
 struct ApiDoc;
@@ -74,6 +115,7 @@ struct AppState {
     freepik_client: Option<FreepikApiClient>,
     keypair: Arc<solana_sdk::signature::Keypair>,
     url_mappings: Arc<tokio::sync::RwLock<HashMap<String, String>>>,
+    api_state: api::ApiState,
 }
 
 #[tokio::main]
@@ -105,17 +147,29 @@ async fn main() {
         .ok()
         .map(FreepikApiClient::new);
 
-    let state = AppState {
-        solana_client,
-        freepik_client,
-        keypair: Arc::new(keypair),
+    let keypair_arc = Arc::new(keypair);
+
+    let api_state = api::ApiState {
+        solana_client: solana_client.clone(),
+        freepik_client: freepik_client.clone(),
+        keypair: keypair_arc.clone(),
         url_mappings: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
     };
 
+    let state = AppState {
+        solana_client,
+        freepik_client,
+        keypair: keypair_arc,
+        url_mappings: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+        api_state,
+    };
+
     let app = Router::new()
+        // Legacy endpoints (keeping for backward compatibility)
         .route("/", get(health_check))
         .route("/mint-nft", post(mint_nft_handler))
         .route("/generate-and-mint-nft", post(generate_and_mint_nft_handler))
+        .route("/fee-estimate", get(get_fee_estimate_handler))
         .route("/create-collection", post(create_collection_handler))
         .route("/list-nft", post(list_nft_handler))
         .route("/buy-nft", post(buy_nft_handler))
@@ -131,6 +185,14 @@ async fn main() {
         .route("/marketplace/listings", get(get_listed_nfts_handler))
         .route("/marketplace/search", post(search_nfts_handler))
         .route("/marketplace/nft/:address", get(get_nft_details_handler))
+        // New v1 API endpoints
+        .route("/api/v1/images/generate", post(api::generate_images))
+        .route("/api/v1/nfts/mint", post(api::mint_nft))
+        .route("/api/v1/wallet/:address/nfts", get(api::get_wallet_nfts))
+        .route("/api/v1/marketplace/list", post(api::list_nft))
+        .route("/api/v1/marketplace/listings", get(api::get_listings))
+        .route("/api/v1/fees/estimate", get(api::get_fee_estimates))
+        .route("/api/v1/health", get(api::health_check))
         // Swagger UI
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(CorsLayer::permissive())
@@ -168,7 +230,7 @@ async fn mint_nft_handler(
     State(state): State<AppState>,
     Json(req): Json<nft::MintNftRequest>,
 ) -> Result<Json<nft::MintNftResponse>, String> {
-    let result = nft::mint_nft(state.solana_client, &*state.keypair, req).await?;
+    let result = nft::mint_nft(state.solana_client, &*state.keypair, req, state.url_mappings.clone()).await?;
     Ok(Json(result))
 }
 
@@ -258,6 +320,21 @@ async fn generate_and_mint_nft_handler(
         state.url_mappings.clone(),
         req
     ).await?;
+    Ok(Json(result))
+}
+
+#[utoipa::path(
+    get,
+    path = "/fee-estimate",
+    responses(
+        (status = 200, description = "Fee estimate retrieved successfully", body = nft::FeeEstimateResponse)
+    ),
+    tag = "nft"
+)]
+async fn get_fee_estimate_handler(
+    State(state): State<AppState>,
+) -> Result<Json<nft::FeeEstimateResponse>, String> {
+    let result = nft::get_fee_estimate(state.solana_client, &*state.keypair).await?;
     Ok(Json(result))
 }
 

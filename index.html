@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NFT Marketplace - Test Frontend</title>
     <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
-    <script src="https://unpkg.com/bs58@4.0.1/index.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bs58@4.0.1/index.min.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -55,6 +55,24 @@
         .success {
             color: green;
         }
+        .fee-breakdown {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .fee-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+        }
+        .fee-total {
+            font-weight: bold;
+            border-top: 1px solid #ddd;
+            padding-top: 10px;
+            margin-top: 10px;
+        }
     </style>
 </head>
 <body>
@@ -69,6 +87,12 @@
     </div>
 
     <div class="container">
+        <h2>Fee Estimate</h2>
+        <button id="getFeeEstimate">Get Fee Estimate</button>
+        <div id="feeEstimateResult"></div>
+    </div>
+
+    <div class="container">
         <h2>Generate Image & Mint NFT</h2>
         <input type="text" id="nftName" placeholder="NFT Name" value="My NFT">
         <input type="text" id="nftSymbol" placeholder="Symbol" value="MNFT">
@@ -80,6 +104,11 @@
             <option value="anime">Anime</option>
             <option value="abstract">Abstract</option>
         </select>
+        <div id="feeBreakdownSection" style="display: none;">
+            <h3>Fee Breakdown</h3>
+            <div id="feeBreakdown"></div>
+            <button id="payFeesAndMint">Pay Fees & Mint NFT</button>
+        </div>
         <button id="generateAndMintNft">Generate Image & Mint NFT</button>
         <div id="generateAndMintResult"></div>
     </div>
@@ -107,6 +136,7 @@
         let wallet = null;
         let publicKey = null;
         let generatedImageUrl = null;
+        let currentFeeEstimate = null;
 
         // Initialize wallet
         async function initWallet() {
@@ -159,10 +189,85 @@
             }
         }
 
-        // Generate image and mint NFT in one operation
-        async function generateAndMintNft() {
+        // Get fee estimate
+        async function getFeeEstimate() {
+            document.getElementById('getFeeEstimate').disabled = true;
+            document.getElementById('feeEstimateResult').innerHTML = 'Getting fee estimate...';
+
+            try {
+                const response = await fetch('http://localhost:3001/fee-estimate', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                });
+
+                const result = await response.json();
+                if (response.ok) {
+                    currentFeeEstimate = result;
+                    displayFeeBreakdown(result);
+                    document.getElementById('feeEstimateResult').innerHTML = `
+                        <div class="success">Fee estimate retrieved successfully!</div>
+                    `;
+                } else {
+                    document.getElementById('feeEstimateResult').innerHTML = `<div class="error">Error: ${result.error}</div>`;
+                }
+            } catch (err) {
+                console.error('Failed to get fee estimate:', err);
+                document.getElementById('feeEstimateResult').innerHTML = `<div class="error">Failed to get fee estimate</div>`;
+            } finally {
+                document.getElementById('getFeeEstimate').disabled = false;
+            }
+        }
+
+        // Display fee breakdown
+        function displayFeeBreakdown(feeEstimate) {
+            const breakdown = feeEstimate.fee_breakdown;
+            const feeBreakdownHtml = `
+                <div class="fee-breakdown">
+                    <div class="fee-item">
+                        <span>Mint Account Rent:</span>
+                        <span>${breakdown.mint_account_rent} SOL</span>
+                    </div>
+                    <div class="fee-item">
+                        <span>Token Account Rent:</span>
+                        <span>${breakdown.token_account_rent} SOL</span>
+                    </div>
+                    <div class="fee-item">
+                        <span>Metadata Account Rent:</span>
+                        <span>${breakdown.metadata_account_rent} SOL</span>
+                    </div>
+                    <div class="fee-item">
+                        <span>Master Edition Rent:</span>
+                        <span>${breakdown.master_edition_rent} SOL</span>
+                    </div>
+                    <div class="fee-item">
+                        <span>Transaction Fees:</span>
+                        <span>${breakdown.transaction_fees} SOL</span>
+                    </div>
+                    <div class="fee-item">
+                        <span>Platform Fee (10%):</span>
+                        <span>${breakdown.platform_fee} SOL</span>
+                    </div>
+                    <div class="fee-item fee-total">
+                        <span>Total Fee:</span>
+                        <span>${breakdown.total_fee} SOL</span>
+                    </div>
+                </div>
+            `;
+            document.getElementById('feeBreakdown').innerHTML = feeBreakdownHtml;
+            document.getElementById('feeBreakdownSection').style.display = 'block';
+        }
+
+        // Pay fees and mint NFT
+        async function payFeesAndMint() {
             if (!publicKey) {
                 alert('Please connect your wallet first');
+                return;
+            }
+
+            if (!currentFeeEstimate) {
+                alert('Please get a fee estimate first');
                 return;
             }
 
@@ -172,16 +277,22 @@
             const style = document.getElementById('style').value;
 
             if (!name || !symbol || !prompt) {
-                alert('Please enter NFT name, symbol, and prompt');
+                alert('Please fill in all required fields');
                 return;
             }
 
-            document.getElementById('generateAndMintNft').disabled = true;
-            document.getElementById('generateAndMintResult').innerHTML = 'Generating image and minting NFT...';
+            document.getElementById('payFeesAndMint').disabled = true;
+            document.getElementById('generateAndMintResult').innerHTML = 'Processing payment and minting NFT...';
 
             try {
+                // Create a fee payment transaction signature
+                const feeMessage = `Pay fees for NFT minting: ${currentFeeEstimate.fee_breakdown.total_fee} SOL for ${publicKey.toString()}`;
+                const encodedFeeMessage = new TextEncoder().encode(feeMessage);
+                const signedFeeMessage = await wallet.signMessage(encodedFeeMessage);
+                const feePaymentSignature = bs58.encode(signedFeeMessage.signature);
+
                 // Sign a message to prove ownership
-                const message = `Generate and Mint NFT: ${name} for ${publicKey.toString()}`;
+                const message = `Generate and mint NFT: ${name} for ${publicKey.toString()}`;
                 const encodedMessage = new TextEncoder().encode(message);
                 const signedMessage = await wallet.signMessage(encodedMessage);
                 const signature = bs58.encode(signedMessage.signature);
@@ -199,6 +310,7 @@
                         creator_pubkey: publicKey.toString(),
                         signature,
                         message,
+                        fee_payment_signature: feePaymentSignature,
                     }),
                 });
 
@@ -208,16 +320,78 @@
                         <div class="success">NFT generated and minted successfully!</div>
                         <div>NFT Address: ${result.nft_address}</div>
                         <div>Transaction: ${result.transaction_signature}</div>
+                        <div class="fee-breakdown">
+                            <h4>Fee Breakdown:</h4>
+                            <div class="fee-item">
+                                <span>Mint Account Rent:</span>
+                                <span>${result.fee_breakdown.mint_account_rent} SOL</span>
+                            </div>
+                            <div class="fee-item">
+                                <span>Token Account Rent:</span>
+                                <span>${result.fee_breakdown.token_account_rent} SOL</span>
+                            </div>
+                            <div class="fee-item">
+                                <span>Metadata Account Rent:</span>
+                                <span>${result.fee_breakdown.metadata_account_rent} SOL</span>
+                            </div>
+                            <div class="fee-item">
+                                <span>Master Edition Rent:</span>
+                                <span>${result.fee_breakdown.master_edition_rent} SOL</span>
+                            </div>
+                            <div class="fee-item">
+                                <span>Transaction Fees:</span>
+                                <span>${result.fee_breakdown.transaction_fees} SOL</span>
+                            </div>
+                            <div class="fee-item">
+                                <span>Platform Fee (10%):</span>
+                                <span>${result.fee_breakdown.platform_fee} SOL</span>
+                            </div>
+                            <div class="fee-item fee-total">
+                                <span>Total Fee Paid:</span>
+                                <span>${result.fee_breakdown.total_fee} SOL</span>
+                            </div>
+                        </div>
                     `;
+                    // Hide fee breakdown section after successful minting
+                    document.getElementById('feeBreakdownSection').style.display = 'none';
+                    currentFeeEstimate = null;
                 } else {
                     document.getElementById('generateAndMintResult').innerHTML = `<div class="error">Error: ${result.error}</div>`;
                 }
             } catch (err) {
-                console.error('Failed to generate and mint NFT:', err);
-                document.getElementById('generateAndMintResult').innerHTML = `<div class="error">Failed to generate and mint NFT</div>`;
+                console.error('Failed to pay fees and mint NFT:', err);
+                document.getElementById('generateAndMintResult').innerHTML = `<div class="error">Failed to pay fees and mint NFT</div>`;
             } finally {
-                document.getElementById('generateAndMintNft').disabled = false;
+                document.getElementById('payFeesAndMint').disabled = false;
             }
+        }
+
+        // Generate image and mint NFT in one step (legacy - now shows fee estimate first)
+        async function generateAndMintNft() {
+            if (!publicKey) {
+                alert('Please connect your wallet first');
+                return;
+            }
+
+            const name = document.getElementById('nftName').value;
+            const symbol = document.getElementById('nftSymbol').value;
+            const prompt = document.getElementById('prompt').value;
+
+            if (!name || !symbol || !prompt) {
+                alert('Please fill in all required fields');
+                return;
+            }
+
+            // First get fee estimate
+            await getFeeEstimate();
+            
+            // Show message to user about fees
+            document.getElementById('generateAndMintResult').innerHTML = `
+                <div style="background: #d1ecf1; border: 1px solid #bee5eb; padding: 10px; border-radius: 4px; margin: 10px 0;">
+                    <strong>Fee estimate retrieved!</strong><br>
+                    Please review the fee breakdown above and click "Pay Fees & Mint NFT" to proceed.
+                </div>
+            `;
         }
 
         // Generate image (legacy)
@@ -279,10 +453,39 @@
                 return;
             }
 
+            // Get fee estimate first
+            if (!currentFeeEstimate) {
+                document.getElementById('mintResult').innerHTML = 'Getting fee estimate...';
+                try {
+                    const feeResponse = await fetch('http://localhost:3001/fee-estimate', {
+                        method: 'GET',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                    });
+                    const feeResult = await feeResponse.json();
+                    if (feeResponse.ok) {
+                        currentFeeEstimate = feeResult;
+                    } else {
+                        document.getElementById('mintResult').innerHTML = `<div class="error">Failed to get fee estimate: ${feeResult.error}</div>`;
+                        return;
+                    }
+                } catch (err) {
+                    document.getElementById('mintResult').innerHTML = `<div class="error">Failed to get fee estimate</div>`;
+                    return;
+                }
+            }
+
             document.getElementById('mintNft').disabled = true;
             document.getElementById('mintResult').innerHTML = 'Minting NFT...';
 
             try {
+                // Create a fee payment transaction signature
+                const feeMessage = `Pay fees for NFT minting: ${currentFeeEstimate.fee_breakdown.total_fee} SOL for ${publicKey.toString()}`;
+                const encodedFeeMessage = new TextEncoder().encode(feeMessage);
+                const signedFeeMessage = await wallet.signMessage(encodedFeeMessage);
+                const feePaymentSignature = bs58.encode(signedFeeMessage.signature);
+
                 // Sign a message to prove ownership
                 const message = `Mint NFT: ${name} for ${publicKey.toString()}`;
                 const encodedMessage = new TextEncoder().encode(message);
@@ -301,6 +504,7 @@
                         creator_pubkey: publicKey.toString(),
                         signature,
                         message,
+                        fee_payment_signature: feePaymentSignature,
                     }),
                 });
 
@@ -310,6 +514,13 @@
                         <div class="success">NFT minted successfully!</div>
                         <div>NFT Address: ${result.nft_address}</div>
                         <div>Transaction: ${result.transaction_signature}</div>
+                        <div class="fee-breakdown">
+                            <h4>Fee Breakdown:</h4>
+                            <div class="fee-item">
+                                <span>Total Fee Paid:</span>
+                                <span>${result.fee_breakdown.total_fee} SOL</span>
+                            </div>
+                        </div>
                     `;
                 } else {
                     document.getElementById('mintResult').innerHTML = `<div class="error">Error: ${result.error}</div>`;
@@ -325,6 +536,8 @@
         // Event listeners
         document.getElementById('connectWallet').addEventListener('click', connectWallet);
         document.getElementById('disconnectWallet').addEventListener('click', disconnectWallet);
+        document.getElementById('getFeeEstimate').addEventListener('click', getFeeEstimate);
+        document.getElementById('payFeesAndMint').addEventListener('click', payFeesAndMint);
         document.getElementById('generateAndMintNft').addEventListener('click', generateAndMintNft);
         document.getElementById('generateImage').addEventListener('click', generateImage);
         document.getElementById('mintNft').addEventListener('click', mintNft);

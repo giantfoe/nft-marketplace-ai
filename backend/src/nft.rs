@@ -9,6 +9,17 @@ use std::{str::FromStr, sync::Arc, collections::HashMap};
 use crate::freepik_api::FreepikApiClient;
 use utoipa::ToSchema;
 
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct FeeBreakdown {
+    pub mint_account_rent: u64,
+    pub metadata_account_rent: u64,
+    pub master_edition_rent: u64,
+    pub transaction_fee: u64,
+    pub total_minting_cost: u64,
+    pub platform_fee: u64,
+    pub total_fee: u64,
+}
+
 #[derive(Deserialize, ToSchema)]
 pub struct MintNftRequest {
     pub name: String,
@@ -17,6 +28,7 @@ pub struct MintNftRequest {
     pub creator_pubkey: String,
     pub signature: String,
     pub message: String,
+    pub fee_payment_signature: Option<String>, // Signature for fee payment transaction
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -28,12 +40,73 @@ pub struct GenerateAndMintNftRequest {
     pub creator_pubkey: String,
     pub signature: String,
     pub message: String,
+    pub fee_payment_signature: Option<String>, // Signature for fee payment transaction
 }
 
 #[derive(Serialize, ToSchema)]
 pub struct MintNftResponse {
     pub nft_address: String,
     pub transaction_signature: String,
+    pub fee_breakdown: FeeBreakdown,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct FeeEstimateResponse {
+    pub fee_breakdown: FeeBreakdown,
+    pub platform_wallet: String,
+}
+
+// Calculate minting fees
+pub async fn calculate_minting_fees(
+    client: Arc<solana_client::rpc_client::RpcClient>,
+) -> Result<FeeBreakdown, String> {
+    // Get rent exemption amounts for different account types
+    let mint_account_rent = client
+        .get_minimum_balance_for_rent_exemption(SplMint::LEN)
+        .map_err(|e| format!("Failed to get mint account rent: {}", e))?;
+    
+    // Metadata account size (approximate)
+    let metadata_account_rent = client
+        .get_minimum_balance_for_rent_exemption(679) // Standard metadata account size
+        .map_err(|e| format!("Failed to get metadata account rent: {}", e))?;
+    
+    // Master edition account size
+    let master_edition_rent = client
+        .get_minimum_balance_for_rent_exemption(282) // Standard master edition size
+        .map_err(|e| format!("Failed to get master edition rent: {}", e))?;
+    
+    // Estimate transaction fee (5000 lamports is typical for complex transactions)
+    let transaction_fee = 5000u64;
+    
+    let total_minting_cost = mint_account_rent + metadata_account_rent + master_edition_rent + transaction_fee;
+    
+    // Platform fee: 10% of minting cost
+    let platform_fee = total_minting_cost / 10;
+    
+    let total_fee = total_minting_cost + platform_fee;
+    
+    Ok(FeeBreakdown {
+        mint_account_rent,
+        metadata_account_rent,
+        master_edition_rent,
+        transaction_fee,
+        total_minting_cost,
+        platform_fee,
+        total_fee,
+    })
+}
+
+// Get fee estimate endpoint
+pub async fn get_fee_estimate(
+    client: Arc<solana_client::rpc_client::RpcClient>,
+    platform_keypair: &Keypair,
+) -> Result<FeeEstimateResponse, String> {
+    let fee_breakdown = calculate_minting_fees(client).await?;
+    
+    Ok(FeeEstimateResponse {
+        fee_breakdown,
+        platform_wallet: platform_keypair.pubkey().to_string(),
+    })
 }
 
 async fn upload_to_ipfs(data: &[u8], _content_type: &str) -> Result<String, String> {
@@ -65,6 +138,7 @@ pub async fn mint_nft(
     client: Arc<solana_client::rpc_client::RpcClient>,
     keypair: &solana_sdk::signature::Keypair,
     req: MintNftRequest,
+    url_mappings: Arc<tokio::sync::RwLock<HashMap<String, String>>>,
 ) -> Result<MintNftResponse, String> {
     // Validate inputs
     if req.name.is_empty() || req.symbol.is_empty() || req.uri.is_empty() {
@@ -78,7 +152,10 @@ pub async fn mint_nft(
     let creator_pubkey = Pubkey::from_str(&req.creator_pubkey)
         .map_err(|_| "Invalid creator pubkey format".to_string())?;
 
-    // For testing, skip signature verification if creator is the test address
+    // Calculate required fees
+    let fee_breakdown = calculate_minting_fees(client.clone()).await?;
+
+    // For testing, skip signature verification and fee validation if creator is the test address
     let test_address = "7P25ACncfhKXcurkfAwGxiVo9zRycM1U6obWYzV9WC1Z";
     if req.creator_pubkey != test_address {
         // Verify signature
@@ -89,12 +166,39 @@ pub async fn mint_nft(
         if !signature.verify(&creator_pubkey.to_bytes(), message_bytes) {
             return Err("Invalid signature".to_string());
         }
+
+        // Validate fee payment - check that user has sufficient balance
+        let user_balance = client.get_balance(&creator_pubkey)
+            .map_err(|e| format!("Failed to get user balance: {}", e))?;
+
+        if user_balance < fee_breakdown.total_fee {
+            return Err(format!(
+                "Insufficient balance. Required: {} lamports, Available: {} lamports",
+                fee_breakdown.total_fee,
+                user_balance
+            ));
+        }
+
+        // TODO: In a production system, you would verify the fee_payment_signature
+        // to ensure the user has actually sent the payment to the platform wallet
+        if req.fee_payment_signature.is_none() {
+            return Err("Fee payment signature required".to_string());
+        }
     } else {
-        // Test mode: skip verification
+        // Test mode: skip verification and fee validation
     }
 
-    // Use the image URI directly as the NFT URI - this is a valid approach
-    let metadata_uri = req.uri.clone();
+    // Create a short URL for the image to enable proxying
+    let short_id = format!("{:x}", md5::compute(&req.uri));
+
+    // Store the mapping
+    {
+        let mut mappings = url_mappings.write().await;
+        mappings.insert(short_id.clone(), req.uri.clone());
+    }
+
+    // Create the short URL
+    let metadata_uri = format!("http://localhost:3001/image/{}", short_id);
 
     // Generate mint keypair
     let mint = Keypair::new();
@@ -212,6 +316,7 @@ pub async fn mint_nft(
     Ok(MintNftResponse {
         nft_address: mint.pubkey().to_string(),
         transaction_signature: signature.to_string(),
+        fee_breakdown,
     })
 }
 
@@ -246,9 +351,10 @@ pub async fn generate_and_mint_nft(
         creator_pubkey: req.creator_pubkey,
         signature: req.signature,
         message: req.message,
+        fee_payment_signature: req.fee_payment_signature,
     };
 
-    mint_nft(client, keypair, mint_req).await
+    mint_nft(client, keypair, mint_req, url_mappings).await
 }
 
 #[derive(Deserialize, ToSchema)]
