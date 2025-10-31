@@ -25,3 +25,5 @@ md5 = "0.7"
 chrono = { version = "0.4", features = ["serde"] }
 utoipa = { version = "4.0", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "6.0", features = ["axum"] }
+ed25519-dalek = "1.0"
+bs58 = "0.5"

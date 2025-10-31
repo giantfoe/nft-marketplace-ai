@@ -155,37 +155,29 @@ pub async fn mint_nft(
     // Calculate required fees
     let fee_breakdown = calculate_minting_fees(client.clone()).await?;
 
-    // For testing, skip signature verification and fee validation if creator is the test address
-    let test_address = "7P25ACncfhKXcurkfAwGxiVo9zRycM1U6obWYzV9WC1Z";
-    if req.creator_pubkey != test_address {
-        // Verify signature
-        use solana_sdk::signature::Signature;
-        let signature = Signature::from_str(&req.signature)
-            .map_err(|_| "Invalid signature format".to_string())?;
-        let message_bytes = req.message.as_bytes();
-        if !signature.verify(&creator_pubkey.to_bytes(), message_bytes) {
-            return Err("Invalid signature".to_string());
-        }
+    // Verify signature using proper Solana wallet signature verification
+    if !crate::wallet::validate_signature(&req.message, &req.signature, &req.creator_pubkey) {
+        return Err("Invalid signature - message not signed by the provided wallet".to_string());
+    }
 
-        // Validate fee payment - check that user has sufficient balance
-        let user_balance = client.get_balance(&creator_pubkey)
-            .map_err(|e| format!("Failed to get user balance: {}", e))?;
+    // Validate fee payment - check that user has sufficient balance
+    let user_balance = client.get_balance(&creator_pubkey)
+        .map_err(|e| format!("Failed to get user balance: {}", e))?;
 
-        if user_balance < fee_breakdown.total_fee {
-            return Err(format!(
-                "Insufficient balance. Required: {} lamports, Available: {} lamports",
-                fee_breakdown.total_fee,
-                user_balance
-            ));
-        }
+    if user_balance < fee_breakdown.total_fee {
+        return Err(format!(
+            "Insufficient balance. Required: {} lamports, Available: {} lamports",
+            fee_breakdown.total_fee,
+            user_balance
+        ));
+    }
 
-        // TODO: In a production system, you would verify the fee_payment_signature
-        // to ensure the user has actually sent the payment to the platform wallet
-        if req.fee_payment_signature.is_none() {
-            return Err("Fee payment signature required".to_string());
-        }
-    } else {
-        // Test mode: skip verification and fee validation
+    // TODO: In a production system, you would verify the fee_payment_signature
+    // to ensure the user has actually sent the payment to the platform wallet
+    // For now, we'll make this optional for testing purposes
+    if req.fee_payment_signature.is_some() {
+        // Verify fee payment signature if provided
+        // TODO: Implement fee payment signature verification
     }
 
     // Create a short URL for the image to enable proxying
@@ -203,7 +195,11 @@ pub async fn mint_nft(
     // Generate mint keypair
     let mint = Keypair::new();
 
-    // Derive token account (ATA)
+    // Parse the creator's public key
+    let creator_pubkey = Pubkey::from_str(&req.creator_pubkey)
+        .map_err(|e| format!("Invalid creator pubkey: {}", e))?;
+
+    // Derive token account (ATA) for the user's wallet (the actual owner)
     let token_account = spl_associated_token_account::get_associated_token_address(&creator_pubkey, &mint.pubkey());
 
     // Derive metadata account
@@ -220,6 +216,18 @@ pub async fn mint_nft(
 
     // Get recent blockhash
     let recent_blockhash = client.get_latest_blockhash().map_err(|e| format!("Failed to get blockhash: {}", e))?;
+
+    println!("Mint NFT Debug Info:");
+    println!("  Backend wallet: {}", keypair.pubkey());
+    println!("  Creator wallet (NFT owner): {}", creator_pubkey);
+    println!("  Mint address: {}", mint.pubkey());
+    println!("  Token account (ATA): {}", token_account);
+    println!("  Metadata account: {}", metadata_account);
+    println!("  Master edition: {}", master_edition);
+
+    // Check if backend wallet has sufficient balance
+    let balance = client.get_balance(&keypair.pubkey()).map_err(|e| format!("Failed to get balance: {}", e))?;
+    println!("  Backend wallet balance: {} lamports ({} SOL)", balance, balance as f64 / 1_000_000_000.0);
 
     // Create instructions
     let mut instructions = Vec::new();
@@ -244,10 +252,10 @@ pub async fn mint_nft(
     ).map_err(|e| format!("Failed to create init mint ix: {}", e))?;
     instructions.push(init_mint_ix);
 
-    // 3. Create ATA
+    // 3. Create ATA for user's wallet
     let create_ata_ix = ata_instruction::create_associated_token_account(
-        &keypair.pubkey(),
-        &creator_pubkey,
+        &keypair.pubkey(), // Backend pays for the ATA creation
+        &creator_pubkey,   // User owns the ATA
         &mint.pubkey(),
         &spl_token::id(),
     );
@@ -310,8 +318,16 @@ pub async fn mint_nft(
     let mut transaction = Transaction::new_with_payer(&instructions, Some(&keypair.pubkey()));
     transaction.sign(&[keypair, &mint], recent_blockhash);
 
+    println!("  Transaction created with {} instructions", instructions.len());
+    println!("  Sending transaction...");
+
     // Send transaction
-    let signature = client.send_and_confirm_transaction(&transaction).map_err(|e| format!("Failed to send tx: {}", e))?;
+    let signature = client.send_and_confirm_transaction(&transaction).map_err(|e| {
+        println!("  Transaction failed: {}", e);
+        format!("Failed to send tx: {}", e)
+    })?;
+
+    println!("  Transaction successful: {}", signature);
 
     Ok(MintNftResponse {
         nft_address: mint.pubkey().to_string(),

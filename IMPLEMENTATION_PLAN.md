@@ -1,11 +1,11 @@
-# Implementation Plan for NFT Marketplace Backend and Solana Contracts
+# Implementation Plan for mintmint.fun Backend and Solana Contracts
 
 ## Overview
 This plan focuses on developing the backend (Rust with Axum) and Solana smart contracts (Anchor framework) for the NFT marketplace. The frontend will be handled by another developer.
 
 ## Project Structure
 ```
-NFTS.FUN/
+mintmint.fun/
 ├── backend/                 # Rust API server
 │   ├── src/
 │   │   ├── main.rs         # Server setup, routes

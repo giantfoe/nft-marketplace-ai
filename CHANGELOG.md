@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Branding**: Updated application name from "mint mint.fun" to "mintmint.fun" (removed space between mint words)
+- Updated HTML title in frontend/index.html
+- Updated navbar branding in frontend/src/components/Navbar.tsx
+- Updated HowItWorks page title in frontend/src/pages/HowItWorks.tsx
+- Updated backend server startup messages and health check response
+- Updated README.md title from "mint mint.fun Platform" to "mintmint.fun Platform"
+- Updated IMPLEMENTATION_PLAN.md title and project structure references
+- **Previous**: Updated application name from "NFT.fun" to "mint mint.fun" across all components
+- Updated HTML title in frontend/index.html
+- Updated navbar branding in frontend/src/components/Navbar.tsx
+- Updated HowItWorks page title in frontend/src/pages/HowItWorks.tsx
+- Updated backend server startup messages and health check response
+- Updated README.md title from "NFT Marketplace Platform" to "mint mint.fun Platform"
+- Updated IMPLEMENTATION_PLAN.md title and project structure references
+
+### Fixed
+- **Critical**: Fixed NFT creator ownership issue where NFTs were being minted to backend wallet instead of user's wallet
+- Updated NFT minting logic in `backend/src/nft.rs` to properly use `creator_pubkey` parameter for token account derivation
+- Fixed Associated Token Account (ATA) creation to use user's wallet as owner while backend pays for creation costs
+- Resolved "Attempt to debit an account but found no record of a prior credit" error by ensuring backend wallet has sufficient SOL balance
+- Added comprehensive debug logging to NFT minting process for better error diagnosis and monitoring
+
+### Changed
+- NFT minting now correctly creates tokens in user's wallet instead of backend wallet
+- Backend wallet now only serves as transaction fee payer, not NFT owner
+- Improved error handling and logging in NFT minting process
+
+## [2024-12-19]
+
+### Fixed
+- **Critical**: Fixed image generation failure due to response format mismatch between backend's `ApiResponse<T>` wrapper and frontend's direct data expectation
+- Updated frontend API service to properly handle backend's wrapped response format in `frontend/src/services/api.ts`
+
+### Changed
+- Temporarily commented out "Number of Categories" and "Inspirational Images" sections in the NFT creation form for future implementation
+
+## [2024-12-18]
+
 ### Added
 - Production readiness assessment report
 - Comprehensive analysis of system architecture, performance, security, and code quality

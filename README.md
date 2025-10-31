@@ -1,4 +1,4 @@
-# NFT Marketplace Platform
+# mintmint.fun Platform
 
 A decentralized NFT marketplace built on Solana blockchain, featuring minting, trading, and collection management.
 

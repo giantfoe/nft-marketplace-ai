@@ -205,7 +205,7 @@ async fn main() {
         .unwrap_or(3001);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    println!("NFT Marketplace API server starting on {}", addr);
+    println!("mintmint.fun API server starting on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
@@ -220,7 +220,7 @@ async fn main() {
     tag = "health"
 )]
 async fn health_check() -> &'static str {
-    "NFT Marketplace API - Healthy"
+    "mintmint.fun API - Healthy"
 }
 
 #[utoipa::path(

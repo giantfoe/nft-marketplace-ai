@@ -28,10 +28,68 @@ pub struct WalletNftsResponse {
     pub count: usize,
 }
 
-pub fn validate_signature(_message: &str, _signature: &str, _pubkey: &str) -> bool {
-    // TODO: Implement proper signature validation
-    // For now, return true
-    true
+pub fn validate_signature(message: &str, signature: &str, pubkey: &str) -> bool {
+    use solana_sdk::pubkey::Pubkey;
+    use std::str::FromStr;
+    use ed25519_dalek::{Signature, PublicKey, Verifier};
+    
+    println!("Validating signature for message: {}", message);
+    println!("Signature: {}", signature);
+    println!("Public key: {}", pubkey);
+    
+    // Parse the public key
+    let pubkey = match Pubkey::from_str(pubkey) {
+        Ok(pk) => pk,
+        Err(e) => {
+            println!("Failed to parse public key: {}", e);
+            return false;
+        }
+    };
+    
+    // Decode the base58 signature
+    let signature_bytes = match bs58::decode(signature).into_vec() {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            println!("Failed to decode signature: {}", e);
+            return false;
+        }
+    };
+    
+    // Ensure signature is 64 bytes (ed25519 signature length)
+    if signature_bytes.len() != 64 {
+        println!("Invalid signature length: {} (expected 64)", signature_bytes.len());
+        return false;
+    }
+    
+    // Convert to ed25519 signature
+    let signature = match Signature::from_bytes(&signature_bytes) {
+        Ok(sig) => sig,
+        Err(e) => {
+            println!("Failed to create ed25519 signature: {}", e);
+            return false;
+        }
+    };
+    
+    // Convert public key to ed25519 public key
+    let public_key = match PublicKey::from_bytes(&pubkey.to_bytes()) {
+        Ok(key) => key,
+        Err(e) => {
+            println!("Failed to create public key: {}", e);
+            return false;
+        }
+    };
+    
+    // Verify the signature against the message bytes
+    match public_key.verify(message.as_bytes(), &signature) {
+        Ok(_) => {
+            println!("Signature verification successful");
+            true
+        }
+        Err(e) => {
+            println!("Signature verification failed: {}", e);
+            false
+        }
+    }
 }
 
 pub async fn get_wallet_balance(
