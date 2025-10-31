@@ -26,6 +26,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Restored original Connect Wallet button styling with glass-morphism design
 - Maintained exact original styling: bg-white/5, backdrop-blur-sm, border-white/10
 - Preserved responsive behavior and hover effects from original design
+- Fixed AI art generation feature by configuring Freepik API key in backend environment
+- Resolved "Failed to generate AI image" error by enabling proper API client initialization
+- Fixed NFT minting functionality by correcting API endpoint mismatches
+- Updated frontend API service to use v1 API endpoints (/api/v1/nfts/mint, /api/v1/fees/estimate, /api/v1/images/generate, /api/v1/health)
+- Aligned frontend MintRequest and MintResponse interfaces with backend v1 API structure
+- Resolved "Failed to mint NFT" error by fixing endpoint routing and request format compatibility
+- Fixed AI image generation response handling by updating ImageGenerationResponse interface to match backend v1 API structure
+- Updated CreateCollectionForm component to correctly access generated image URL from response.images[0].url
+- Resolved "Failed to generate AI image" error by aligning frontend expectations with backend response format
+- Fixed Vite proxy configuration to preserve /api prefix when forwarding requests to backend (removed incorrect path rewrite)
+- Resolved recurring "Failed to generate AI image" error caused by proxy stripping /api prefix from requests
+- **CRITICAL FIX**: Fixed frontend API service to handle backend's ApiResponse<T> wrapper format
+- Updated frontend request method to properly extract data from backend's {success, data, error, message} response structure
+- Resolved image generation failures caused by response format mismatch between frontend expectations and backend wrapper
 
 ### Deployed
 - Backend API server running on http://localhost:3001
